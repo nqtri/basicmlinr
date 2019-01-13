@@ -1,0 +1,124 @@
+
+Opening data file and assigning to mydata variable:
+
+```{r open}
+mydata <- read.table('credit_card_data-headers.txt',header = TRUE)
+```
+
+Calling kernlab library for SVM models:
+
+```{r kernlab}
+library(kernlab)
+```
+
+Calling Support Vector Machine function: ksvm and assign it to 4 models with 'vanilladot' kernel (linear) and different C values: 100, 500, 0.0001, 1,000,000:
+
+```{r svm}
+model1 <- ksvm (as.matrix(mydata[,1:10]),as.factor(mydata[,11]),type='C-svc',kernel='vanilladot',C=100,scaled=TRUE)
+model2 <- ksvm (as.matrix(mydata[,1:10]),as.factor(mydata[,11]),type='C-svc',kernel='vanilladot',C=500,scaled=TRUE)
+model3 <- ksvm (as.matrix(mydata[,1:10]),as.factor(mydata[,11]),type='C-svc',kernel='vanilladot',C=0.0001,scaled=TRUE) 
+model4 <- ksvm (as.matrix(mydata[,1:10]),as.factor(mydata[,11]),type='C-svc',kernel='vanilladot',C=1000000,scaled=TRUE)
+```
+
+
+Calculating a1...am in the 4 models:
+
+``` {r a}
+model1_a <- colSums(model1@xmatrix[[1]] * model1@coef[[1]])
+model2_a <- colSums(model2@xmatrix[[1]] * model2@coef[[1]])
+model3_a <- colSums(model3@xmatrix[[1]] * model3@coef[[1]])
+model4_a <- colSums(model4@xmatrix[[1]] * model4@coef[[1]])
+```
+
+Calculating a0 in the 4 models:
+
+``` {r a0}
+model1_a0 <- -model1@b
+model2_a0 <- -model2@b
+model3_a0 <- -model3@b
+model4_a0 <- -model4@b
+```
+
+Summarizing equation for 4 models: 
+
+``` {r equation, echo = FALSE}
+cat('Model 1:',model1_a[1],"*x1 + ", model1_a[2],"*x2 + ",model1_a[3],"*x3 + ",model1_a[4],"*x4 + ",model1_a[5],"*x5 + ",model1_a[6],"*x6 + ",model1_a[7],"*x7 + ",model1_a[8],"*x8 + ",model1_a[9],"*x9 + ",model1_a[10],"*x10 + ", model1_a0,"= 0")
+
+cat('Model 2:',model2_a[1],"*x1 + ", model2_a[2],"*x2 + ",model2_a[3],"*x3 + ",model2_a[4],"*x4 + ",model2_a[5],"*x5 + ",model2_a[6],"*x6 + ",model2_a[7],"*x7 + ",model2_a[8],"*x8 + ",model2_a[9],"*x9 + ",model2_a[10],"*x10 + ", model2_a0,"= 0")
+
+cat('Model 3:',model3_a[1],"*x1 + ", model3_a[2],"*x2 + ",model3_a[3],"*x3 + ",model3_a[4],"*x4 + ",model3_a[5],"*x5 + ",model3_a[6],"*x6 + ",model3_a[7],"*x7 + ",model3_a[8],"*x8 + ",model3_a[9],"*x9 + ",model3_a[10],"*x10 + ", model3_a0,"= 0")
+
+cat('Model 4:',model4_a[1],"*x1 + ", model4_a[2],"*x2 + ",model4_a[3],"*x3 + ",model4_a[4],"*x4 + ",model4_a[5],"*x5 + ",model4_a[6],"*x6 + ",model4_a[7],"*x7 + ",model4_a[8],"*x8 + ",model4_a[9],"*x9 + ",model4_a[10],"*x10 + ", model4_a0,"= 0")
+```
+
+Looking at the predictions by each model:
+
+``` {r predict}
+model1_pred <- predict(model1,mydata[,1:10])
+model2_pred <- predict(model2,mydata[,1:10])
+model3_pred <- predict(model3,mydata[,1:10])
+model4_pred <- predict(model4,mydata[,1:10])
+```
+
+Calculating the fraction of the model’s predictions match the actual classification, hence reflecting the accuracy level of the models with different C values:
+
+``` {r accurary}
+model1_accuracy <- sum(model1_pred == mydata[,11]) / nrow(mydata)
+model2_accuracy <- sum(model2_pred == mydata[,11]) / nrow(mydata)
+model3_accuracy <- sum(model3_pred == mydata[,11]) / nrow(mydata)
+model4_accuracy <- sum(model4_pred == mydata[,11]) / nrow(mydata)
+```
+
+```{r statement, echo=FALSE}
+print(paste("Accuracy of Model 1 with C = 100: ", model1_accuracy))
+print(paste("Accuracy of Model 2 with C = 500: ", model2_accuracy))
+print(paste("Accuracy of Model 3 with C = 0.0001: ", model3_accuracy))
+print(paste("Accuracy of Model 4 with C = 1,000,000: ", model4_accuracy))
+```
+
+It is interesting to see that the accuracy of Model 1 with C = 100 and that of Model 2 with C = 500 is the same. Both got about 86% of credit approval outcomes correct. When the magnitude of C was changed as the case of Model 3 and Model 4. The accuracy dropped. Model 3 with C = 0.0001 has an accuracy level of about 55% while Model 4 about 63%. It seemed like when we went extremely small with C, the accuracy is more affected than when we went extremely large.
+
+
+I was curious to see what will happen for models with non-linear kernels. After some research online, I read the 'rbfdot' (Radial Basis) kernel is a good default kernel for non-linear model so I decided to give it a try.
+
+Calling Support Vector Machine function: ksvm with 'rbfdot' kernel (non-linear) and C = 500:
+
+``` {r model5}
+model5 <- ksvm (as.matrix(mydata[,1:10]),as.factor(mydata[,11]),type='C-svc',kernel='rbfdot',C=500,scaled=TRUE)
+```
+
+Calculating a1...am in Model 5:
+
+``` {r a5}
+model5_a <- colSums(model5@xmatrix[[1]] * model5@coef[[1]])
+```
+
+Calculating a0 in Model 5:
+
+``` {r a05}
+model5_a0 <- -model5@b
+```
+
+Looking at the predictions by Model 5:
+
+``` {r predict5}
+model5_pred <- predict(model5,mydata[,1:10])
+```
+
+Calculating the fraction of Model 5’s predictions match the actual classification, hence reflecting the accuracy level:
+
+``` {r accurary5}
+model5_accuracy <- sum(model5_pred == mydata[,11]) / nrow(mydata)
+```
+
+``` {r statement5, echo = FALSE}
+print(paste("Accuracy of Model 5 with Radial Basis kernel and C = 500: ", model5_accuracy))
+```
+
+Model 5 of 'rbdot' kernel surprised me with almost 98% prediction accuracy, much better than the best of the above 4 'vanilladot' kernel models of about 86%. This might explain that the prediction model for credit card approval we are looking at should be non-linear.
+
+
+
+
+
+
