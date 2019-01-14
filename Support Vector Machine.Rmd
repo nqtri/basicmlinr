@@ -54,8 +54,8 @@ Sorting accuracy measurements by descending value and displaying the top 10 C va
 ```{r accuracy_rank}
 results_dt_test = rbindlist(accuracy_list)
 
-head(results_dt_test[order(-accuracy)][1:50]) #head of the best 50 C values in the model
-tail(results_dt_test[order(-accuracy)][1:50]) #tail of the best 50 C values in the model
+head(results_dt_test[order(accuracy,decreasing = TRUE)][1:50]) #head of the best 50 C values in the model
+tail(results_dt_test[order(accuracy,decreasing = TRUE)][1:50]) #tail of the best 50 C values in the model
 ```
 
 It seems like for a range of c values range from 0.002 to 100,000 gives the best prediction for the credit approval data, with more than 86% accuracy. However, it is a caution to note that not every point of data in this range will give the exact same results.
