@@ -1,0 +1,229 @@
+Setting up by calling relevant libraries and opening data file and assigning to 'mydata' variable:
+
+```{r set up, results='hide'}
+library(kernlab)
+library(kknn)
+library(data.table)
+set.seed(93) #to achieve reproductible results
+```
+
+```{r openfile}
+mydata <- read.table('credit_card_data-headers.txt',header = TRUE) #open data file with  headers then set header parameter to TRUE
+
+head(mydata) #First 6 rows of the data
+tail(mydata) #Last 6 rows of the data
+```
+
+First, I still need to split the data into 2 sets: training and test sets where cross validation will be performed on training set. The ratio of training/testing I'd use here is 80/20. Here, I'll use random sampling selection process.
+
+``` {r datasplit}
+set.seed(93)
+test_portion = sample(1:nrow(mydata),0.2*nrow(mydata), replace = FALSE) #replace = FALSE means whatever data is taken out will not be put back for selection again
+
+cross_test_set = mydata[test_portion,] #data set used for testing
+
+cross_train_set = mydata[-test_portion,] #data set used for training
+
+head(cross_test_set)
+
+head(cross_train_set)
+```
+
+#### KNN Model
+
+Next, I create a function to find the accuracy range for a given range of k (nearest neighbors) and a given value of k fold by which cross validation is perform:
+
+``` {r cal}
+accuracy_cal = function(data, max_k = 20, k_fold = 10){ #max_k = max number of k, here, i consider a k range of 1 to 20
+  
+  accuracy_range = rep(0,max_k) # set up a range of 50 zeros as a place holder so that prediction accuracy numbers can be inserted in later
+  
+  for (k in 1:max_k) {
+    set.seed(93) #setting seed to achieve reproductible results, any number is ok
+    cv_model = cv.kknn(R1~A1+A2+A3+A8+A9+A10+A11+A12+A14+A15,
+                       data, 
+                       kcv = k_fold, #indicate that cross validation to be performed
+                       k = k,
+                       scale = TRUE)
+    
+    prediction = as.integer(round(cv_model[[1]][,2],0))
+    
+    accuracy_range[[k]] = sum(prediction == data[,11]) / nrow(data)
+  }
+  return(accuracy_range)
+}
+```
+
+Then, let's see the accuracy range for a default value of max_k = 20 and k_fold = 10 on the training set:
+
+``` {r acc_range}
+accuracy_cal(cross_train_set)
+```
+
+Let's see how that plots and locate the highest prediction accuracy and the corresponding k nearest neighbors:
+
+```{r acc_plot}
+plot(accuracy_cal(cross_train_set))
+```
+
+```{r max}
+max(accuracy_cal(cross_train_set))
+which.max(accuracy_cal(cross_train_set))
+```
+
+As it is shown here, for a 10-fold cross validation knn model, the best prediction accuracy for credit card approval is around 84.54% and the corresponding k value for the optimal number of nearest neighbours in this case is 5.
+
+Now, I will write a function that can loop through a range of k (nearest neighbors) values and also range of k-fold value to determine the optimal combination: 
+
+```{r optimalf}
+best_fold_finder = function(data, max_k = 20, max_fold = 20){
+  
+  comparison_list <- list() #empty list to store value
+  
+  for (i in 1:(max_fold-1)) { 
+    results <- accuracy_cal(data, max_k = max_k, k_fold = i + 1) #call the first function, k_fold cannot be 1
+    
+    comparison_list[[i]]= data.table(fold=i+1,optimal_k = which.max(results), highest_accuracy = max(results))
+  }
+  
+  comparison_table = rbindlist(comparison_list)
+  
+  return(comparison_table[order(highest_accuracy, decreasing = TRUE)]) #result is a table of folds, corresponding optimal k and accuracy measure
+}
+```
+
+Let's plug in the credit card data for a range of k (nearest neighbors) of 1 to 20 and maximum folds of 20 for cross validation:
+
+``` {r ccdata}
+head(best_fold_finder(cross_train_set,max_k = 20, max_fold = 20)) #display first 6
+```
+
+As we can see, the optimal combination is 5 folds cross validation for a knn model of 11 nearest neighbors. The accuracy measure is 85.49%
+
+As the final step, I want to reconfirm the accuracy of the model with k = 11  on the test set:
+
+``` {r xtest_set}
+cross_test_knn <- kknn(R1~.,
+                  cross_train_set,
+                  cross_test_set,
+                  k=11, 
+                  scale = TRUE)
+knn_test_prediction = as.integer(round(fitted(cross_test_knn)))
+
+xtest_knn_accuracy = sum(knn_test_prediction == cross_test_set[,11]) / nrow(cross_test_set)
+
+xtest_knn_accuracy
+
+```
+
+On the test set, a k value of 8 produces an acurracy measure of 85.38%. Hence, this number reflects the 'true' accuracy of the model. 
+
+#### SVM Model
+
+Now that we have done cross validation for KNN model, let's explore the process for SVM model:
+
+From Homework 1, my optimal c value for 'vanilladot' kernel is has a range of values, but let's pick one, 100. Let's cross validate that model.
+
+First, I create a function that will take in the dataframe, c value, and number of fold for cross validation to produce a table that has both unvalidated accuracy measure and validated accuracy measure: 
+
+``` {r crosssvm, results='hide'}
+svm_accuracy_cal = function(data, c = 100, k_fold = 10){
+  
+  set.seed(93)
+  cross_model <-  ksvm(as.matrix(data[,1:10]),
+                       as.factor(data[,11]),
+                       type='C-svc',kernel='vanilladot',
+                       C=c,
+                       scaled=TRUE,
+                       cross = k_fold) #indicate that cross validation to be performed
+  
+  accuracy_pre_val = 1 - cross_model@error #cross_model@error gives the training error, the unvalidated accuracy measure is 1 minus that
+  cross_accuracy = 1 - cross_model@cross #cross_model@cross gives the cross validation error, the validated accuracy measure is 1 minus that
+  comparison = data.table(no_validation = accuracy_pre_val, with_validation =  cross_accuracy) 
+  
+  return(comparison)
+}
+```
+
+Let's see how the accuracy measure change for c = 100 with 10-fold cross validation on the training set:
+
+``` {r svmexp}
+train_set_accuracy = svm_accuracy_cal(cross_train_set, c = 100, k_fold = 10)
+```
+```{r}
+train_set_accuracy
+```
+
+On training set, with no validation, accuracy measure is 86.25%. With 10-fold cross validation, the accuracy is 86.08%. The difference is only around 0.15%, which is very small and indicates that the random effects in the training data is small and our model is already optimal.
+
+Similar to knn model, I will write a function that, for a given value of c, loops through a range of k-fold value to determine the optimal combination. Initially, I planned for it to loop through a range of c as well but I've noticed from the last homework that change in c value did little to the accuracy measure unless it was extremely different in magnitude.
+
+``` {r svmformula}
+
+best_fold_finder_svm = function(data, c = 100, max_fold = 20){
+  
+  svm_comparison_list <- list() #empty list to store value
+  
+  for(i in 1:(max_fold-1)) {
+    set.seed(93)   
+    accuracy_measure <-  svm_accuracy_cal(data, c = c, k_fold = i+1) #call the first function, k_fold must be more than 1, otherwise error
+     
+    svm_comparison_list[[i]] = data.table(fold = i+ 1, no_validation =accuracy_measure[[1]], with_validation = accuracy_measure[[2]], difference = accuracy_measure[[1]] - accuracy_measure[[2]])
+  }
+  
+  svm_comparison_table = rbindlist(svm_comparison_list)
+  
+  
+  return(svm_comparison_table[order(with_validation,decreasing = TRUE)])
+}
+```
+
+Let's plug in the training set with c = 100 and max_fold = 20:
+
+``` {r svmfold, results='hide'}
+fold_table = best_fold_finder_svm(cross_train_set, c = 100, max_fold = 20)
+```
+``` {r}
+head(fold_table) #display first 6
+```
+
+As we can see, the optimal number of folds is 20 for cross validation for a 'vanilladot' SVM model with c = 100. The validated accuracy measure is 86.07%.
+
+Finally, let's confirm the accuracy of the svm model with c = 100 on the test set:
+
+``` {r test_set, results='hide'}
+xtest_model <- ksvm(as.matrix(cross_train_set[,1:10]),
+                   as.factor(cross_train_set[,11]),
+                   type='C-svc',
+                   kernel='vanilladot',
+                   C=100,
+                   scaled=TRUE)
+```
+``` {r}
+xpred_test <- predict(xtest_model,cross_test_set[,1:10]) 
+
+xtested_accuracy = sum(xpred_test == cross_test_set[,11]) / nrow(cross_test_set)
+
+xtested_accuracy
+```
+
+On the test set, a c value of 100 produces an acurracy measure of 86.92%. Hence, this number reflects the 'true' accuracy of the model.
+
+In order to get the classifier equation for the model, I will have to run the model again on the whole data set.
+
+``` {r xequation, results='hide'}
+xoptimal_model = ksvm(as.matrix(mydata[,1:10]),
+                     as.factor(mydata[,11]),
+                     type='C-svc',
+                     kernel='vanilladot',
+                     C=100,
+                     scaled=TRUE) #set up optimal model
+
+xoptimal_model_a <- colSums(xoptimal_model@xmatrix[[1]] * xoptimal_model@coef[[1]]) #for a1...am
+
+xoptimal_model_a0 <- -xoptimal_model@b #for a0
+```
+
+``` {r}
+cat('Optimal Linear Model:',xoptimal_model_a[1],"*x1 + ", xoptimal_model_a[2],"*x2 + ",xoptimal_model_a[3],"*x3 + ",xoptimal_model_a[4],"*x4 + ",xoptimal_model_a[5],"*x5 + ",xoptimal_model_a[6],"*x6 + ",xoptimal_model_a[7],"*x7 + ",xoptimal_model_a[8],"*x8 + ",xoptimal_model_a[9],"*x9 + ",xoptimal_model_a[10],"*x10 + ", xoptimal_model_a0,"= 0")
+```
