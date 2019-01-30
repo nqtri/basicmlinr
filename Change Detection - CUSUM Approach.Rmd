@@ -1,0 +1,188 @@
+```{r}
+tempdata <- read.table('temps.txt',header = TRUE)
+
+head(tempdata)
+```
+
+### Part a
+
+Next, I want to run Change Dectection model using CUSUM across all years and put the calculated metric S sub t back into the dataframe. Then based on a predetermined value of threshold T, the unofficial end date for the summer will be determined for each year. 
+
+Before I do that, I need to set a value for T and also C. Since this Change Dectection model can be used to predict future unofficial summer ends, I will need universal values for T and C across all years. One way to do that is to find T and C based on the standard deviation of the avaerage temperature of each day across all years.
+
+Hence, I'll calculate the average temperature of each day across all years.
+
+```{r}
+avg_temp <- rowMeans(tempdata[,-1]) #average across earch row.
+avg_temp
+```
+
+Next, I will set the value of C to be 0.5 time of the standard deviation of avg_temp to account for random fluctuation in the data and T to be 3 times of that.
+
+```{r}
+
+C_value <- 0.5*sd(avg_temp)
+T_value <- 3*sd(avg_temp)
+
+cat('C value is:',C_value,'and T threshold is:',T_value)
+
+```
+
+Now I have C and T, I can go ahead with the Change Detection model using CUSUM. First I will need to create some variables to help with storing my result data:
+
+
+```{r}
+cusum_year <- tempdata #replicate the dataframe as a place holder for the S sub t values
+
+summer_end_date = rep(0, ncol(tempdata) - 1) #a vector of 0s as a place holder with length coresponding to number of years to store unofficial summer end dates
+
+summer_end_index = rep(0, ncol(tempdata) - 1) #a vector of 0s as a place holder with length coresponding to number of years to store the row index of the unofficial summer end dates for part b
+```
+
+Now, I will loop through each date for each year to determine the unofficial summer end dates for them using the C and T values I determined earlier.
+
+```{r}
+for (col in 2:ncol(cusum_year)) { #start at column 2 since column 1 is dates
+  
+  temp <- tempdata[,col]
+  
+  mean_temp <- mean(temp) #taking the mean temperature for that year
+  
+  s <- rep(0,length(temp)) # a vector of 0s as a place holder to store S sub t values
+  
+  s_sub_t <- 0 #S sub t starts at 0
+  
+  for (n in 1:length(temp)) {
+    difference <- mean_temp - temp[n] - C_value #to detect a decrease, it is mean minus the value
+    
+    s_sub_t <- max(0, (s[n-1] + difference))
+    
+    s[n] <- s_sub_t #asisgning S sub t value back to the vector
+  }
+  
+  cusum_year[,col] <- s #assigning the S sub t vectors back to the coressponding year
+  
+  date_summer_ends <- which(cusum_year[,col] > T_value)[1] #searching for the row indices at which S sub t exceeds T, taking the first value when that occurs
+  
+  summer_end_date[col - 1] <- as.vector(tempdata[,1][date_summer_ends]) #based on the row index, searching for the date and assigning it back to the vector created earlier
+  
+  summer_end_index[col - 1] <- date_summer_ends #assigning the row index of date when the summer ends for each year back to earlier vector to use for part b
+}
+
+head(cusum_year)
+tail(cusum_year)
+```
+
+```{r}
+summer_end_date
+```
+
+Now that I have obtained the dates when summer unofficially ended for each year, I will assign them to a data frame with the year values for better visualization.
+
+```{r}
+year <- colnames(tempdata)[-1] #getting year values, exlcuding the first column name since that is DAY.
+
+sum_end_table <- data.frame(year)
+
+sum_end_table["date_summer_ends"] <- format(as.Date(summer_end_date,"%d-%b"),format="%m-%d") #formatting string values into Dates values with month-date format.
+
+sum_end_table
+```
+
+Let's visualize that on a graph to see if it is consistent for most of the years:
+
+```{r}
+ggplot(sum_end_table, aes(year, date_summer_ends, group = 1)) + geom_line() + geom_point() + labs(title="Date Summer Unofficially Ends") + theme(axis.text.x=element_text(angle=90))
+```
+
+Most of the years seem consistently have summer ended from late September to early October with a few exceptions. It seemed that the model was sufficient. However, if I want to improve it more, I could aim to look into those few exception with a larger C values to tackle the random large fluctation in temperature. Or I can increase the T value to 4 or 5 standard deviations to move most dates to early October for consistency purposes.
+
+
+### Part b
+
+For this part, I will again use the CUSUM approach to detect whether Atlanta weather has gotten warmer over the years. In order to do that, I depend on the data I obtained from Part a: the dates that summer unofficially ends for each year. I will then calculate the average summer temperature for each year from July 01 to the date that summer ends of each year. Then I will build the Change Detection model on that.
+
+```{r}
+summer_avg_temp <- rep(0,length(year)) #a vector of 0s with length equal to number of years as a place holder to storage the average summer temperature for each year
+
+#Looping through each year with its corresponding summer end date to find a range of summer temperatures then take the mean of that
+
+for (col in 2:ncol(tempdata)){ #start from column 2 since column 1 is DAY
+  
+  summer_temp <- tempdata[,col][1:summer_end_index[col-1]]
+  
+  summer_avg_temp[col-1] <- mean(summer_temp)
+}
+
+summer_avg_temp
+```
+
+Let's visualize this to check how summer temperature fluctuates across the year:
+
+```{r}
+summer_avg_table <- data.frame(year)
+summer_avg_table["avg_temp"] <- summer_avg_temp
+
+ggplot(summer_avg_table, aes(year, avg_temp, group = 1)) + geom_line() + geom_point() + labs(title="Average Summer Temperature in Atlanta") + theme(axis.text.x=element_text(angle=90)) + geom_hline(yintercept = mean(summer_avg_temp))
+```
+
+It seems that there are two periods that summer temperature goes up significant above the average level (i.e from 1999 to 2000 and from 2010 to 2012). Now we can test which one is an actual change using the CUSUM approach.
+
+Next, I will set the parameters for the model (i.e mean, C value, and T value). Similar to part a, I will set C value equal to 0.5 time of the standard deviation of the average summer temperatures across the years and T threshold of 2 times of that. 
+
+```{r}
+mean_yearly_summer_temp <- mean(summer_avg_temp)
+
+summer_C_value <- 0.5*sd(summer_avg_temp)
+
+summer_T_value <- 2*sd(summer_avg_temp)
+
+cat('Mean is:',mean_yearly_summer_temp,'and C value is:',summer_C_value,'and T threshold is:',summer_T_value)
+
+```
+
+Now, I can loop through the average summer temperatures using CUSUM approach:
+
+```{r}
+
+summer_s <- rep(0,length(summer_avg_temp)) #a vector of 0s with length of the number of years as place holder to store S sub t values later
+
+s_sub_t <- 0
+
+for (n in 1:length(summer_avg_temp)) {
+  difference <- summer_avg_temp[n] - mean_yearly_summer_temp - summer_C_value #to detect an increase, it is the value minus mean
+  
+  s_sub_t <- max(0, (summer_s[n-1] + difference))
+  
+  summer_s[n] <-  s_sub_t
+}
+
+summer_s
+```
+
+Now that I have all the S sub t values for all the years, I can determine if the Atlanta summer temperature has gone up over the year and if so when:
+
+```{r}
+year_summertemp_increases_index <- which(summer_s > summer_T_value)[1] #searching for the row indices at which S sub t exceeds T, taking the first value when that occurs
+year_summertemp_increases <- year[year_summertemp_increases_index]
+
+year_summertemp_increases
+```
+
+Using CUSUM approach, the average summer temperature in Atlanta did increase over the years and it started in 2011. However, this is very dependent on the C and T values chosen earlier. My T threshold is only 2 standard deviations of the average summer temperatures. The model can be made less sensitive by increasing the value of T threshold to 3 and 4. I did test with these 2 values and in both cases, the CUSUM approach concluded that the average summer temperature in Atlanta did not go up over years as the increases in some years are not significant enough. Therefore, it really depends.
+
+Let's plot this for better visualization:
+
+```{r}
+
+yearly_summer_cusum <- data.frame(year)
+
+yearly_summer_cusum ['S_t'] <- summer_s
+
+yearly_summer_cusum
+```
+```{r}
+ggplot(yearly_summer_cusum, aes(year, S_t, group = 1)) + geom_line() + geom_point() + labs(title="CUSUM Average Summer Temperature") + theme(axis.text.x=element_text(angle=90)) + geom_hline(yintercept = summer_T_value)
+```
+
+With the graph, it got clearer that summer temperature in Atlanta started going up midway through 2010 till 2012 then it dropped back down.
