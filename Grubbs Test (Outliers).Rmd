@@ -1,0 +1,98 @@
+Setting up by calling relevant libraries and opening data file and assigning data variable:
+
+```{r set up, results='hide'}
+library(outliers)
+library(ggplot2)
+set.seed(93)
+```
+
+```{r openfile}
+crimedata <- read.table('uscrime.txt',header = TRUE) #open data file with  headers then set header parameter to TRUE
+
+head(crimedata) #First 6 rows of the data
+```
+
+Here, I am interested in the last column 'Crime' which accounts for number of crimes per 100,000 people.
+
+```{r}
+crime_number <- sort(crimedata$Crime, decreasing = TRUE) #I sorted this data in decreasing order
+
+head(crime_number)
+```
+
+I want to find the outliers in the crime number data. Let's visualize that with a box and whisker plot.
+
+```{r}
+boxplot(crime_number, main="Crime Number per 100,000 People", col = "pink")
+```
+
+From the box and whisker plot, it seems that there are 3 outliers at the upper end of the data range. I will employ the Grubbs test to verify that.
+
+However, before I begin the test, it should be noted that one of the assumptions of Grubbs test is normal distribution of data. Therefore, I will test for normality in the crime number data using Q-Q (quantile-quantile) plot. The Q-Q plot produces a 45 degree straight line representing how a normally distributed dataset would plot.
+
+```{r}
+qqnorm(crime_number)
+qqline(crime_number)
+```
+
+Here, I observed that most data points of the crime number data are near to the Q-Q line with a few exceptions on the upper end. Therefore, I can assume the normality of the dataset to begin the Grubbs test.
+
+The first Grubbs test will be testing the highest value of the range (i.e 1993)
+
+```{r}
+grubbs.test(crime_number)
+```
+
+The alternative hypothesis in the test is that 1993 is an outlier. Here, we have a p-value of 0.07887 which is arguably small enough if I consider a critical value of 0.08 in order for us to reject the null hypothesis in favor of the alternative. In this case, I can assume there is enough statistical evidence that 1993 is an outlier. 
+
+I therefore removed 1993 from the crime_number data.
+
+```{r}
+crime_number <- crime_number[-1] #I was able to do this since I already sorted the data in decreasing order, the highest value has index of 1.
+head(crime_number)
+```
+
+Next, I conduct the second Grubbs test for the second highest value in the original data.
+
+```{r}
+grubbs.test(crime_number)
+```
+
+In this test, the p-value is even lower at 0.02848, hence it is statistically significant enough to reject the null hypothesis and accep that alternative hypothesis that 1969 is an outlier.
+
+As such, 1969 should also be removed from the data.
+
+```{r}
+crime_number <- crime_number[-1] #I was able to do this since I already sorted the data in decreasing order, the highest value has index of 1.
+head(crime_number)
+```
+
+The box and whisker plot earlier showed that there are potentially 3 outliers. I haved detected 2, now I can run the test another to see if the last one is an outlier too.
+
+```{r}
+grubbs.test(crime_number)
+```
+
+Here, the p-value is 0.1781, large enough that I cannot reject the null hypothesis that 1674 is not an outlier. Therefore, I conclude that there is not enough statistical evidence that indicuates 1674 is an outlier.
+
+Before I finished, I want to double check if the lower end of the data has any outlier even if the box and whisker plot suggested none.
+
+```{r}
+grubbs.test(crime_number, opposite = TRUE) #TRUE opposite checks for outliers on the other end of the data
+```
+
+I got a p-value of 1 and that is significant so I cannot reject the null hypothesis. Therefore, there is no outlier at the lower end of the crime number data. 
+
+In conclusion, I found 2 outliers at the upper end of the crime number data and proceeded to remove then. After the removal, below is the crime number data that is ready for further analysis.
+
+```{r}
+crime_number
+```
+
+If the whole data frame is needed, here is the data frame that has the 2 outliers in crime number removed.
+
+``` {r}
+crimedata <- crimedata[order(crimedata$Crime, decreasing = TRUE),][-1:-2,] #removing the top 2 rows after sorting in decreasing order of crime number
+
+head(crimedata)
+```
