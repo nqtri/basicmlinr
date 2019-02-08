@@ -1,0 +1,109 @@
+To start this question, I first import the data and look through the first 6 rows of the data to get a better sense of the data.
+
+```{r}
+data = read.table("temps.txt", header = TRUE)
+```
+
+```{r}
+head(data)
+```
+
+I will first need to convert the data into a time series, which will allow me to use the Holt-Winters function.
+
+```{r}
+data_vec = as.numeric(as.vector(as.matrix(data)[,2:21])) #Convert data into a vector
+ts_data = ts(data_vec, start=1996, frequency=nrow(data)) #Convert data to time series
+hw_data = HoltWinters(ts_data, seasonal="multiplicative") #Perform Holt Winters analysis
+```
+
+Looking at the R documentation, it seems that the Holt Winters function automatically chooses the best parameters by "minimizing the squared prediction error". As we can see below, an alpha of 0.62 and a gamma of 0.55 has been chosen. An alpha of 0.62 suggests that older observations are somewhat important when smoothing. 
+
+```{r}
+hw_data
+```
+
+
+```{r}
+plot(hw_data)
+```
+
+I then "fitted" the Holt Winter's data in order to retrieve the seasonal component of the analysis (4th Column)
+
+```{r}
+fitted_hw_data = fitted(hw_data)
+```
+
+Before we continue, we can look at the plot of the fitted values. From having a beta of 0 and the plot below, it seems that trend is not an important component in the temperature data.
+
+```{r}
+plot(fitted_hw_data)
+```
+
+Out of curosity, I also decided to forecast temperature data for 2016. I created a plot for 2015 as well to compare. One thing I noticed is that the graphs looks almost the same, except that the forecasted 2016 plot looks much smoother with less fluctuations than 2015.
+
+```{r}
+par(mfrow=c(1,2)) 
+plot(predict(hw_data, 123), xaxt="n", yaxt="n", xlab="time", ylab="Temp", main="2016 Predicted") #123 is the number of periods to predict. I chose 123 as this is the number of datapoints for each year.
+plot(data[,21], type="l", xaxt="n", yaxt="n", xlab="time", ylab="Temp", main="2015 Actual")
+```
+
+I then re-created the CUSUM function from the previous homework assignment. I decided on a c value of 0.01 after looking at the seasonal data.
+
+```{r}
+find_cusum <- function(x_t, c = 0.01){
+ 
+ cusum = rep(0, length(x_t)) #Create a placeholder vector of 0s
+
+ st_1 = 0 
+ mu = mean(x_t) #Calculates the mean value of the year
+ 
+ for (i in 1:length(x_t)){
+   st = max(0, st_1 + (mu - x_t[i] - c)) #Take the maximum of either 0 or the second part of the CUSUM formula
+   cusum[i] = st #Store the results
+   st_1 = st
+ }
+ 
+ return (cusum)
+}
+
+```
+
+In order to pass the seasonal data to the CUSUM funcion, I will first need to convert the vector and split the data back to their respective years. Note that the year 1996 no longer exist as it is the base year. Therefore, there is now only 19 relevant columns.
+
+```{r}
+
+seasonal_data_matrix = matrix(fitted_hw_data[,4],ncol=19) #Split the data back to their respective years
+seasonal_df = data[,FALSE] #Create an empty dataframe
+
+
+for(i in 1:ncol(seasonal_data_matrix)){
+  seasonal_df[as.character(1996+i)] = find_cusum(seasonal_data_matrix[,i])
+  
+  #Passes the data of each year to the CUSUM function and save it to the dataframe
+}
+
+```
+
+In order to find the date that summer ends, I loop through the CUSUM data for each year (seasonal_df) and find the row index of the first value that meets the threshold. I then use that index to find the date from the data and store it in a vector.
+
+```{r}
+summer_ends = rep(0, ncol(seasonal_df) - 1) #Create a placeholder vector to stores the dates that summer ends
+
+
+for(i in 1:ncol(seasonal_df)){
+  t <- 0.2 #Threshold set at 0.2
+  date_index_meet_threshold = which(seasonal_df[,i] > t)[1] #Finds the first date that exceeds the threshold of each year
+  summer_ends[i] = as.vector(data[,1][date_index_meet_threshold]) 
+}
+
+summer_ends_df = data.frame(colnames(data)[3:ncol(data)]) #Copy of the column names (years)
+summer_ends_df["Summer Ends Date"] = summer_ends
+colnames(summer_ends_df)[1] = "Year"
+
+```
+
+```{r}
+summer_ends_df
+```
+
+From looking at the above result, it seems summer is ending quite consistently around late September and there does not seem to be much evidence that summer is lasting longer.
