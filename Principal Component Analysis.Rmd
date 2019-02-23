@@ -1,0 +1,178 @@
+Setting up by calling relevant libraries and opening data file and assigning data variable:
+
+```{r, results='hide'}
+set.seed(93)
+rm(list=ls()) #clear memory
+library(pls) #for pcr() function
+library(DAAG) #for cross validation
+```
+
+```{r}
+crimedata <- read.table('uscrime.txt',header = TRUE) #open data file with  headers then set header parameter to TRUE
+
+head(crimedata) #First 6 rows of the data
+```
+
+Now I will apply Principal Analysis on all predictors in the data set:
+
+```{r}
+crime_pca <- prcomp(crimedata[,-16],scale = TRUE) #excluding the last column Crime as it is not a predictor
+
+summary(crime_pca)
+```
+
+The way to choose the components to be included in the analysis is through variance with the pricipal component (PC) having the highest variance being more significant. Since prcomp() functions give back standard deviations ofr each, I'd need to convert them to variance. We can also see that the PC is named in decreasing order of standard deviation (i.e PC1 has highest stdev while PC15 has lowest)
+
+```{r}
+pc_variance <- crime_pca$sdev**2
+
+pc_variance 
+```
+
+Now I can plot a graph of varinace for each PC:
+
+```{r}
+barplot(pc_variance,names.arg=c(1:15))
+```
+
+Next, pcr() function from the 'leap' library is used to perform corss validation across all possible combinations of the number of principal components and it returned the mean squared error value of each. Even though RSS is not given, MSE is a good proxy to that since all models have the same number of 47 data points. Hence, the combinaiton with the lowest MSE would be optimal.
+
+```{r}
+crime_pcr <- pcr(Crime~.,data = crimedata, scale = TRUE, seed = 93, validation = 'CV') #CV is for cross-validation
+
+summary(crime_pcr)
+```
+
+Now let's compare the Mean Squared Error of each combination: 
+
+```{r}
+validationplot(crime_pcr, main = 'Mean Squared Error vs No. of PCs',val.type = 'MSEP') #MSEP is for mean squared error
+axis(side=1, at=1:15, labels=c(1:15))
+```
+
+As we can see, 6 Principal Components yield the lowest MSE. Hence, I will use 6 Principal Components to build the prediction model:
+
+```{r}
+pc6 <- as.data.frame(crime_pca$x[,1:6])
+
+head(pc6)
+```
+
+To complete the new dataframe, I added the response column (Crime column) to it:
+
+```{r}
+crimedata_withPC <- cbind(pc6, Crime = crimedata$Crime) #adding back to Crime column for modelling.
+
+head(crimedata_withPC)
+```
+
+Next, I used the lm() function to run linear regression on the new dataframe with 7 principal component:
+
+```{r}
+PC6_model <- lm(Crime~.,crimedata_withPC)
+
+summary(PC6_model)
+```
+
+Here, I can see that R-squared is 65.86% while Adjusted R-squared is 60.74%. Recalling from the last homework that I used a 6-predictor linear regression model on the dataset, I got an R-squared of 76.59% and Adjusted R-squared of 73.07% pre cross-validation. However, it is not conclusive as these might be the result of randomness in the data. 
+
+Hence, I will perform cross validation on this model again with 4 fold cross validation to confirm:
+
+```{r}
+cv_PC6_model <- cv.lm(crimedata_withPC,PC6_model,m=4,seed=93,plotit = FALSE)
+```
+
+After cross validation, the model shows a mean square value of 81586, now I will construct the R-squared value from that for the cross-validated model of 7 Princiapl Components. R-squared is SSR/SST = (SST - SSE)/SST.
+
+```{r}
+
+SST <- sum((as.vector(crimedata_withPC$Crime) - mean(crimedata_withPC$Crime))**2) 
+
+SSE_6PC_model <- attr(cv_PC6_model,'ms')*length(crimedata_withPC$Crime)
+
+Rsquare_6PC_model <- (SST - SSE_6PC_model)/SST
+
+Rsquare_6PC_model
+```
+
+Here, the cross-validated R-squared of the 6 PC model is 44.3%. That means it accounts for 44.30% of the variation in the dataset. Now, I recall that in the previous homework, my 6-predictor model showed an R-squared of 59.7% after 4 fold cross validation. Since the number of predictors in the model with PCA is 6, same as 6 preditor of the linear model from before, I see no need to compute adjusted R-squared values to compare again.
+
+This means that the previous 6-predictor model is likely a better model than the 6-principal-component model in this homework.
+
+Next, I will move onto the prediction using the same input as the last homework: 
+
+M = 14.0
+So = 0
+Ed = 10.0
+Po1 = 12.0
+Po2 = 15.5
+LF = 0.640
+M.F = 94.0
+Pop = 150
+NW = 1.1
+U1 = 0.120
+U2 = 3.6
+Wealth = 3200
+Ineq = 20.1
+Prob = 0.04
+Time = 39.0
+
+However, first, let's construct the model in term of original predictors:
+
+```{r}
+
+PC6_int <- PC6_model$coefficients[1] #intercept
+
+PC6_pc <- PC6_model$coefficients[2:7] #coefficients of the PCs
+
+PC6_pc
+```
+
+In order to transfer the principal components back to the values of original 15 predictors, I need to cross multiply the corressponding eigenvectors with the vector of the 6 principal components:
+
+```{r}
+transformed_coef <- crime_pca$rotation[,1:6] %*% PC6_pc 
+
+transformed_coef 
+```
+
+Since prcomp() function also gave us the scaling factor under $scale, I can use that to unscale the original 15 factors:
+
+```{r}
+unscaled_coef <- transformed_coef/crime_pca$scale
+
+unscaled_coef
+```
+
+Now, I need to unscale the intercept value as well which is the difference of the scaled value and the sum of (scaled coefficient*corresponding scaling centre/corresponding scaling factor):
+
+```{r}
+unscaled_int <- PC6_int - sum(transformed_coef*crime_pca$center/crime_pca$scale)
+
+unscaled_int
+```
+
+Now it's time for prediction using the same input for the new city as the previous homework:
+
+```{r}
+
+unscaled_pred <- sum(c(M = 14.0
+                      ,So = 0
+                      ,Ed = 10.0
+                      ,Po1 = 12.0
+                      ,Po2 = 15.5
+                      ,LF = 0.640
+                      ,M.F = 94.0
+                      ,Pop = 150
+                      ,NW = 1.1
+                      ,U1 = 0.120
+                      ,U2 = 3.6
+                      ,Wealth = 3200
+                      ,Ineq = 20.1
+                      ,Prob = 0.04
+                      ,Time = 39.0) * as.vector(unscaled_coef[,1])) + as.vector(unscaled_int)
+
+unscaled_pred
+```
+
+With the given input of the new city, the model that employs PCA with 6 princial components predicts a crime rate of 1,248 which is actually pretty close to the crime rate of 1,304 predicted by the 6-preditor model without PCA last week. I recall that when I predicted the crime rate using the 6-predictor modle without PCA last week, the confidence interval of the prediction is 1,181-1,428 so the prediction using 6 principal components actually falls into that range.
