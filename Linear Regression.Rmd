@@ -1,0 +1,228 @@
+Setting up by calling relevant libraries and opening data file and assigning data variable:
+
+```{r, results='hide'}
+library(leaps) #for the regsubsets() function
+library(DAAG) #for cross-validation
+set.seed(93)
+```
+
+```{r}
+crimedata <- read.table('uscrime.txt',header = TRUE) #open data file with  headers then set header parameter to TRUE
+
+head(crimedata) #First 6 rows of the data
+```
+
+First, I tried to fit all the variables to predict the crime rate:
+
+```{r}
+all_model <- lm(Crime~.,crimedata)
+
+all_model
+```
+
+```{r}
+summary(all_model)
+```
+
+As we can see, even though R-squared is 0.803 which means the model can account for 80.30% of the variability in the the data, this might just be the case of overfitting since the there are 15 predictors with only 45 data points. As such, the adjusted R-squared penalized that to 70.80%.
+
+Let's try predicting the observed crime rate with the following data using the linear regression model above: 
+
+M = 14.0
+So = 0
+Ed = 10.0
+Po1 = 12.0
+Po2 = 15.5
+LF = 0.640
+M.F = 94.0
+Pop = 150
+NW = 1.1
+U1 = 0.120
+U2 = 3.6
+Wealth = 3200
+Ineq = 20.1
+Prob = 0.04
+Time = 39.0
+
+
+```{r}
+all_predictions <- predict(all_model,data.frame(M = 14.0
+                                                ,So = 0
+                                                ,Ed = 10.0
+                                                ,Po1 = 12.0
+                                                ,Po2 = 15.5
+                                                ,LF = 0.640
+                                                ,M.F = 94.0
+                                                ,Pop = 150
+                                                ,NW = 1.1
+                                                ,U1 = 0.120
+                                                ,U2 = 3.6
+                                                ,Wealth = 3200
+                                                ,Ineq = 20.1
+                                                ,Prob = 0.04
+                                                ,Time = 39.0)
+                                                ,interval ="confidence")
+
+all_predictions
+```
+
+As we can see, even though the model predicts a crime rate of 155.43, there confidence interval is extremely wide from -1477 to 1633. However, let's also look at the range of the original data: 
+
+```{r}
+cat('Crime rate ranges from', min(crimedata$Crime),'to',max(crimedata$Crime))
+```
+
+The crime rate is also a lot lower than the smallest crime rate and outside of the original data set. This is a problem with overfitting the model.
+
+As such, I will try to determine the best predictors that can be used to predict. I will employ the regsubsets() function from the 'leaps' library. The regsubsets() looks for best set selection by identifying the model that contains a given number
+of predictors with the lowest residual sum squares (RSS).
+
+```{r}
+
+subset_model <- regsubsets(Crime~.,crimedata,nvmax =15) #nvmax = 15 means I wanted to test across 15 predictors
+
+subset_summary <- summary(subset_model)
+```
+
+```{r}
+subset_summary$outmat
+```
+
+The * indicates which predictor(s) are used for the models. For example, for a 1-predictor model, Po1 is used, for a 2 predictors model, Po1 and Ineq are used. We can see that regardless of the number of predictors, all models employ Po1. It is interesting becasue in our all-predictor model above, Po1 has a relatively high P-value of 0.07889. However, now it seems that Po1 helps with minimizing RSS for all model. Maybe P-value alone cannot determin which factor should be kept or removed.
+
+I am interested to see which other results are included in the regsubset() function:
+
+```{r}
+names(subset_summary)
+```
+
+I see that I can also call RSS, Adjusted R-squared, BIC. First let's plot an elbow diagram for the RSS and R-squared:
+
+```{r}
+par(mfrow=c(2,2))
+plot(subset_summary$rss, type = 'b', xlab = 'Number of Predictors', ylab = 'Residual Sum Squared - RSS')
+plot(subset_summary$rsq, type = 'b', xlab = 'Number of Predictors', ylab = 'R-squared')
+```
+
+As we can see, RSS values falls at a decreasing rate when the number of predictors increased. I can see that the marginal benefit of adding a predictor to the model starts to get minimal at 6 predictors. Likewise, R-squared values increases at a decreasing rate when the number of predictors increase. The marginal benefit starts to level off at 6 predictors as well. Anything beyond that is likely due to overfitting.
+
+At 6 predictors, the RSS is:
+
+```{r}
+subset_summary$rss[6]
+```
+
+At 6 predictors, the R-squared is:
+
+```{r}
+subset_summary$rsq[6]
+```
+Next, I'll plot the BIC graph:
+
+```{r}
+plot(subset_summary$bic, type = 'b', xlab = 'Number of Predictors', ylab = 'Bayesian Information Criterion - BIC')
+```
+
+The number of predictors that would yield minimum BIC value is:
+
+```{r}
+which.min(subset_summary$bic)
+```
+
+Here, the model with 6 predictors has the minimum BIC value, which might be the indication that it is the better model. 
+
+At 6 predictors, the BIC is:
+
+```{r}
+subset_summary$bic[which.min(subset_summary$bic)]
+```
+
+To confirm, I will calculate the absolute difference of BIC between 15 and 6 preditors:
+
+```{r}
+diff_15vs6 <-abs(subset_summary$bic[6]-subset_summary$bic[15])
+
+diff_15vs6
+```
+
+The absolute difference is greater than 10, that means with 6 predictors, the model is 'very likely' to be a better model. Together with our conclustion for RSS and R-squared, model that used the 6 predictors according to regsubset() function is the optimal model to use.
+
+
+Here is the coefficients and y-intercept associated with the modle using 6 predictors:
+
+```{r}
+model6_coef <- coef(subset_model ,6)
+
+model6_coef
+```
+
+Interestingly, coefficients of model with 6 predictors actually exclude those with P-value higher than 0.1 as I saw earlier. Therefore, the equation for the linear regression is:
+
+```{r}
+cat('Crime =',model6_coef[1],'+', model6_coef[2],names(model6_coef)[2],'+', model6_coef[3],names(model6_coef)[3],'+', model6_coef[4],names(model6_coef)[4],'+', model6_coef[5],names(model6_coef)[5],'+', model6_coef[6],names(model6_coef)[6],'+', model6_coef[7],names(model6_coef)[7])
+```
+
+Now let's fit the 6 predictors back into the lm() function for prediction:
+```{r}
+model6_predictors_name <- names(model6_coef[-1])  #Get the names of the predictors except the intercept
+
+model6_fit <- lm(paste0("Crime~",paste0(model6_predictors_name, collapse="+")), crimedata) #fit the regression model with the 6 best predictors
+
+summary(model6_fit)
+```
+
+To confirm that the model with 6 predictors above is a better model than all-predictor model, I will perform a quick 4-fold cross validation on both the models:
+
+Cross validation for all-predictor-model:
+
+```{r}
+all_model_cv <- cv.lm(crimedata,all_model,m=4,seed=93,plotit = FALSE)
+```
+
+Cross validation for 6-predictor-model:
+
+```{r}
+model6_cv <- cv.lm(crimedata,model6_fit,m=4,seed=93,plotit = FALSE)
+```
+
+After cross validation, the model with 6 predictos shows smaller mean square errors than the model with all 15 predictors (59,000 vs 81,736). This again confirms that model with 6 predictors is a better model because that means less discrepancy between actual data and the estimations of the model.To confirm I will calulate the R-squared of the cross validated models:
+
+R-squared is SSR/SST = (SST - SSE)/SST. SST should be the same for both models:
+
+```{r}
+SST <- sum((as.vector(crimedata$Crime) - mean(crimedata$Crime))**2) 
+
+SSE_model15 <- attr(all_model_cv,'ms')*length(crimedata$Crime)
+
+Rsquare_model15 <- (SST - SSE_model15)/SST
+
+Rsquare_model15
+```
+
+```{r}
+SST <- sum((as.vector(crimedata$Crime) - mean(crimedata$Crime))**2) 
+
+SSE_model6 <- attr(model6_cv,'ms')*length(crimedata$Crime)
+
+Rsquare_model6 <- (SST - SSE_model6)/SST
+
+Rsquare_model6
+```
+
+As expected, when randomness is accounted for, the model with 6 predictors proved to have higher R-squared (0.597 vs 0.442) after cross-validation. This means it is a better model as it accounts for 59.7% variations in the data.
+
+The given city has the following input for the relevant predictors of the model:
+
+```{r}
+model6_predictions <- predict(model6_fit,data.frame(M = 14.0
+                                                ,Ed = 10.0
+                                                ,Po1 = 12.0
+                                                ,U2 = 3.6
+                                                ,Ineq = 20.1
+                                                ,Prob = 0.04)
+                                                ,interval ="confidence")
+
+model6_predictions
+```
+
+The predicted crime rate with our 6-predictor model is 1304 crime cases per 100,000 people. I also notice that the confidence interval is much narrower this time.
