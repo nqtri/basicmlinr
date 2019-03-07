@@ -1,0 +1,170 @@
+```{r, results='hide'}
+set.seed(93)
+rm(list=ls()) #clear memory
+library(tree) 
+library(randomForest)
+```
+
+```{r}
+crimedata <- read.table('uscrime.txt',header = TRUE) #open data file with  headers then set header parameter to TRUE
+
+head(crimedata) #First 6 rows of the data
+```
+
+### Part a
+
+In this part, I will attempt to use regression tree to divide the crime data into branches so that each would have its own linear regression model. Then, I will find the R-squared value of the model and then attempt to prune (cut down) branches to see if the model improves.
+
+```{r}
+tree_model <- tree(Crime~.,crimedata)
+
+summary(tree_model)
+```
+
+```{r}
+plot(tree_model)
+text(tree_model)
+```
+
+Using the tree() function, I got a tree with 7 terminal nodes. **The first qualitative aspect** of the model I notice is that predictors Po1 and Pop appear more than once in the tree, indicating the high diversity of data variation in those predictors and hence, high importance to the regression tree.
+
+Next, I will use the regression tree above to predict the crime rate:
+
+```{r}
+original_yhat <- predict(tree_model)
+head(original_yhat)
+```
+
+Then, based on the results, I will calculate the R-squared of the regression tree model:
+
+```{r}
+SSRes <- sum((original_yhat-crimedata$Crime)^2)
+SSTotal <- sum((crimedata$Crime - mean(crimedata$Crime))^2)
+R_squared <- 1 - SSRes/SSTotal
+R_squared
+```
+
+Based on the original result without pruning, the R-squared value for the predictions of the model is 72.45%. This is high and good since that means the model explains 72.45% of the variations in the data. However, in many cases, it might be due to overfitting.Hence, I will perform cross-validation on this. Since we only have 47 data points, the default 10 folds are too much. I will use 3 folds for the cross validation.
+
+```{r}
+set.seed(1)
+cv_tree <- cv.tree(tree_model, K = 3)
+cv_tree
+```
+
+We see that with the original 7 nodes, the cross validation function returns a deviation of 5,678,179 which is better than the rest except 2 nodes. 
+
+```{r}
+best_node <- cv_tree$size[which.min(cv_tree$dev)]
+best_node
+```
+
+Hence, I will prune the tree down to only 2 nodes:
+
+```{r}
+prune_tree <- prune.tree(tree_model, best = best_node)
+summary(prune_tree)
+```
+
+```{r}
+plot(prune_tree)
+text(prune_tree)
+```
+
+Next, I will use the new regression tree to make the predictions on the crime rate: 
+
+```{r}
+prune_yhat <- predict(prune_tree)
+head(prune_yhat)
+```
+
+
+```{r}
+prune_SSRes <- sum((prune_yhat-crimedata$Crime)^2)
+prune_R_squared <- 1 - prune_SSRes/SSTotal
+prune_R_squared
+```
+
+Even though the R-squared is only 36.29%, almost half of the orignal R-squared with 7 nodes, the overfitting might no longer be present. I will test the quality of the pruned model again with cross validation.
+
+```{r}
+set.seed(1)
+cv_prune_tree <- cv.tree(prune_tree, K = 3)
+cv_prune_tree
+```
+
+At 2 nodes, the deviance of 5,678,179 is the same as the deviance of 5,678,179 for the original 7 terminal nodes for the same seed. Here, I notice **the second qualitative aspect of the model** is that even with pruning and cross validation, the accuracy of the model does not seem to improve much, maybe due to the fact that 47 datapoints are too few to make any meaningful predictions.
+
+However, since the first cross-validation results suggested that 2 nodes are better, I will use 2 nodes for further analysis. 
+
+I can now then determine the linear models at each node. The first node contains those with Po1 less than 7.65:
+
+```{r}
+node_1 <- crimedata[crimedata$Po1 <7.65,]
+head(node_1)
+```
+
+The coefficients of the linear equation for the first node is:
+
+```{r}
+node1_lr <- lm(Crime~.,node_1)
+node1_lr$coefficients
+```
+
+Next, the second node, those datapoints with Po1 equal or greater than 7.65:
+
+```{r}
+node_2 <- crimedata[crimedata$Po1 >= 7.65,]
+head(node_2)
+```
+Thus, the coefficients of the linear equation for the second node is:
+```{r}
+node2_lr <- lm(Crime~.,node_2)
+node2_lr$coefficients
+```
+
+### Part b
+
+Here, I will try another method called the Random Forest to determine a prediction model for the crime data.First, I will run the randomForest() function with the default 500 number of trees and 5 variables tried at each split:
+
+```{r}
+set.seed(93)
+crime_randforest <- randomForest(Crime ~., crimedata, importance=TRUE) #importance = TRUE means important predictors should be prioritized
+
+crime_randforest
+```
+
+The default random forest model returns an R-squared result of 40.75%, meaning it can account for 40.75% of the variation in the data. Next, I will see if different number of trees would make a better model. I will loop through a range of number of trees option to see:
+
+```{r}
+tree_counts <- c(100,500,1000,1500,2000)
+r_squared_list <- rep(0,length(tree_counts))
+
+for (i in 1:length(tree_counts)){
+  set.seed(93)
+
+  forest_model <- randomForest(Crime ~., crimedata, importance=TRUE, ntree = tree_counts[i])
+  
+  forest_SSRes <- sum((forest_model$predicted-crimedata$Crime)^2)
+  SSTotal <- sum((crimedata$Crime - mean(crimedata$Crime))^2)
+  forest_R_squared <- 1 - SSRes/SSTotal
+  
+  r_squared_list[i] <- forest_R_squared
+}
+```
+
+The highest R-squared produced above is:
+
+```{r}
+min_r_squared <- min(r_squared_list)
+min_r_squared
+```
+
+Therefore, the optimal number of trees that produced that R-squared value is:
+
+```{r}
+best_numberof_tree <- tree_counts[which.min(r_squared_list)]
+best_numberof_tree
+```
+
+Here, we can see that with 100 number of trees, the random forest model is more optimal by accounting for more variation in the data than the default 500. Sometimes, less is more.
