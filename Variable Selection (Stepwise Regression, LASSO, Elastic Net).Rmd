@@ -1,0 +1,316 @@
+```{r, results='hide'}
+set.seed(93)
+rm(list=ls()) #clear memory
+library(sme) #for AIC, BIC calculations
+library(glmnet) #for LASSO and Elastic Net
+library(DAAG) #for cross validation
+library(data.table) #for comparison table
+```
+
+```{r}
+crimedata <- read.table('uscrime.txt',header = TRUE) #open data file with  headers then set header parameter to TRUE
+
+head(crimedata) #First 6 rows of the data
+```
+
+### Part 1
+
+First, in order for better comparison, I will run a regression model on all predictors as a starting point for my analysis using lm() function:
+
+```{r}
+start_model <- lm(Crime~.,crimedata)
+
+summary(start_model)
+```
+
+Next, I will cross-validate the original model with 4 folds to obtain quality metrics to compare later on:
+```{r}
+cv_start_model <- cv.lm(data = crimedata, start_model, seed = 93, m = 4, plotit = FALSE)
+```
+
+In order to obtain the R squared value of a cross validated model, I defined a function to do that using the predictions and observed values:
+
+```{r}
+get_R2 <- function(prediction,observed){
+  SSRes <- sum((prediction - observed)^2)
+  SSTotal <- sum((observed - mean(observed))^2)
+  R2 <- 1 - SSRes/SSTotal
+}
+```
+
+Thus, the cross validated R squared of the original model is: 
+
+```{r}
+R2_original_model <- get_R2(cv_start_model$cvpred,crimedata$Crime)
+```
+
+However, I noticed that since this is a variable selection process, not all models might have the same number of predictors, an adjusted R-squared value would be better for the task of comparing model quality:
+
+```{r}
+AdjR2_original_model <- 1 - ((1-R2_original_model)*(nrow(crimedata)-1))/(nrow(crimedata)-(length(start_model$coefficients)-1)) # -1 since the $coefficicents returns the intercept as well
+```
+
+```{r}
+original_model_quality <- data.table(Method = 'Original Model', R2 = R2_original_model, Adj_R2 = AdjR2_original_model, AIC = AIC(start_model), Corrected_AIC = AICc(start_model), BIC = BIC(start_model))
+
+original_model_quality
+```
+
+As we can see, the even though the R-squared for the original model with 15 predictors is 44.2%, it is heavily penalized in Adjusted R-squared of only 19.7% when it used all 15 predictors. Hence, I will go head and perform stepwise regression on this to pick the better model with fewer predictors:
+
+The first stepwise regression model I will employ is chosen based on the AIC values. When trace is set to FALSE, the step() function will return only the model with the lowest AIC it found:
+
+```{r}
+model_byAIC <-step(start_model,direction = 'both', trace = FALSE) #'both' is for both forward selection and backward elimination
+model_byAIC
+```
+
+As we can see, the stepwise regression model return an optimal model based on AIC with only a few predictors out of the original 15. Now, I will cross validate this model and then obtain its quality metrics:
+
+````{r}
+cv_model_byAIC <- cv.lm(crimedata, model_byAIC, m=4, , seed = 93, plotit = FALSE)
+```
+
+The R-squared value of the model is:
+
+```{r}
+R2_model_byAIC <- get_R2(cv_model_byAIC$cvpred,crimedata$Crime)
+```
+
+The Adjusted R-squared value of the model is:
+
+```{r}
+AdjR2_model_byAIC <- 1 - ((1-R2_model_byAIC)*(nrow(crimedata)-1))/(nrow(crimedata)-length(model_byAIC$coefficients)+1)
+```
+
+```{r}
+model_byAIC_quality <- data.table(Method = 'by AIC', R2 = R2_model_byAIC, Adj_R2 = AdjR2_model_byAIC, AIC = AIC(model_byAIC), Corrected_AIC = AICc(model_byAIC), BIC = BIC(model_byAIC))
+
+model_byAIC_quality
+```
+
+Next, I will try stepwise regression but the criteria for the model selection is minimum BIC instead of AIC. For that, I will set k = log(nrow(crimedata)) which is log of number of data points.
+
+```{r}
+model_byBIC <-step(start_model,direction = 'both', k = log(nrow(crimedata)), trace = FALSE)
+model_byBIC
+```
+
+Similarly, I will cross validate the model to get its quality metrics:
+
+```{r}
+cv_model_byBIC <- cv.lm(crimedata, model_byBIC, m=4, seed = 93, plotit = FALSE)
+```
+
+The R-squared value of the model is:
+
+```{r}
+R2_model_byBIC <- get_R2(cv_model_byBIC$cvpred,crimedata$Crime)
+```
+
+The Adjusted R-squared value of the model is:
+
+```{r}
+AdjR2_model_byBIC <- 1 - ((1-R2_model_byBIC)*(nrow(crimedata)-1))/(nrow(crimedata)-length(model_byBIC$coefficients)+1)
+```
+
+The quality metrics of the model is shown below:
+
+```{r}
+model_byBIC_quality <- data.table(Method = 'by BIC', R2 = R2_model_byBIC, Adj_R2 = AdjR2_model_byBIC, AIC = AIC(model_byBIC), Corrected_AIC = AICc(model_byBIC), BIC = BIC(model_byBIC))
+
+model_byBIC_quality
+```
+
+From a quick glance, the stepwise regression model based on BIC appears to be better than the one selected using AIC with higher adjusted R-squared,  lower corrected AIC and lower BIC. However, the margin of difference is not a lot and thus, I will save the conclusion after interpreting the LASSO and Elastic Net model.
+
+### Part 2
+
+In order for me to execute the analysis in LASSO and Elastic Net, I'd need to scale the data first. However, categorical data will not be scaled, in this case, it's 'So' column. The response column "Crime" will also not be scaled.
+
+```{r}
+data_to_scale <- subset(crimedata, select=-c(So,Crime))
+
+head(data_to_scale)
+```
+
+Then, I will combine the column "So" as well as the "Crime" column to get a complete data set for further analysis:
+
+```{r}
+scaled_subdata <- scale(data_to_scale)
+
+scaled_data <- as.matrix(cbind(scaled_subdata, subset(crimedata, select=c(So,Crime))))
+
+head(scaled_data)
+```
+
+Next, I will perform LASSO using cv.glmnet() fucntion that would return a range of lambda value chosen based on cross-validated errors. Here, we can obtain the lambda value that yields the minimum cross validated errors. 
+
+Compared to the orginal formula of LASSO and Elastic Net, alpha in 'glmnet' library is lambda while lambda is t in the original formula.
+
+```{r}
+set.seed(93)
+
+lasso_model <- cv.glmnet(scaled_data[,-16],scaled_data[,16],alpha = 1, nfolds = 4, type.measure = 'mse', family= 'gaussian', standardize = FALSE)
+
+lasso_model$lambda.min
+```
+
+Here the optimal lambda is 2.73. Below is a graph of cross validated error plotted against the lambda value used:
+
+```{r}
+plot(lasso_model$lambda,lasso_model$cvm, type = 'l', xlab = 'Lambda Value', ylab = 'Cross-validated Erorrs', main = 'LASSO Model')
+```
+
+From the plot above, the cross validated errors fall steeply when the value of lambda starts to get larger. But after a certain value of lambda, the errors started to increase. This means that a too low lambda makes the budget too constrained to give any effective model and when lambda gets too high, the budget gets freed and can select more coefficients which will start increasing the errors.
+
+From the optimal lambda value, I can pull the coefficients of the model corresponding to that:
+
+```{r}
+lasso_best_model <- coef(lasso_model, s = lasso_model$lambda.min)
+lasso_best_model
+```
+
+Next, I will trim out the predictors that are not used, indicated by '.' sign. The predictors used are as followed:
+
+```{r}
+lasso_predictor_used = names(lasso_best_model[,1][as.matrix(lasso_best_model) != 0])[-1] #-1 to exclude the intercept.
+lasso_predictor_used
+```
+
+Finally, I will rerun the regression model with the the predictors selected by LASSO: 
+
+```{r}
+model_byLASSO = lm(paste0("Crime~",paste0(lasso_predictor_used, collapse="+")), data=data.frame(scaled_data))
+
+summary(model_byLASSO)
+```
+
+Next, I will cross validate the model again to get the quality metrics
+
+```{r}
+cv_model_byLASSO <- cv.lm(crimedata, model_byLASSO, m=4, seed = 93, plotit = FALSE)
+```
+
+The R-squared and adjusted R-squared values of the model is:
+
+```{r}
+R2_model_byLASSO <- get_R2(cv_model_byLASSO$cvpred,crimedata$Crime)
+AdjR2_model_byLASSO <- 1 - ((1-R2_model_byLASSO)*(nrow(crimedata)-1))/(nrow(crimedata)-length(model_byLASSO$coefficients)+1)
+```
+
+The quality metrics table of the LASSO model is:
+
+```{r}
+model_byLASSO_quality <- data.table(Method = 'by LASSO',R2 = R2_model_byLASSO, Adj_R2 = AdjR2_model_byLASSO, AIC = AIC(model_byLASSO), Corrected_AIC = AICc(model_byLASSO), BIC = BIC(model_byLASSO))
+
+model_byLASSO_quality
+```
+
+### Part 3
+
+Lastly, I wil run a model with Elastic Net, the only difference between Elastic Net and LASSO is that for Elastic Net, I will loop through a range of alpha to find the best model whereas for LASSO, alpha is default to 1. I will then choose the optimal alpha value based the the adjusted r-squared of the model with lambda value yielding minimum cross validated errors for a given alpha.
+
+Here, my alpha values will range from 0.01 to 0.99 with a step of 0.01.
+
+```{r}
+alpha_range <- seq(0.01,0.99,0.01)
+elastic_net_lambda_range <- rep(0,length(alpha_range)) #to store lambda values 
+elastic_net_adjr2_range <- rep(0,length(alpha_range)) #to store adjusted R-squared value
+```
+
+
+```{r}
+for (i in 1:length(alpha_range)){
+  
+  set.seed(90)
+  elastic_net_model <- cv.glmnet(scaled_data[,-16],scaled_data[,16],alpha = alpha_range[i], nfolds = 4, type.measure = 'mse', family= 'gaussian', standardize = FALSE)
+  
+  predicted_values <- predict(elastic_net_model, scaled_data[,-16],s = "lambda.min", type = "class")
+  R2_value <- get_R2(predicted_values,scaled_data[,16])
+  
+  coefs_list <- coef(elastic_net_model, s = elastic_net_model$lambda.min)
+  
+  coefs_used = names(coefs_list[,1][as.matrix(coefs_list) != 0])[-1]
+  
+  adj_R2 <- 1 - ((1-R2_value)*(nrow(scaled_data)-1))/(nrow(scaled_data)-length(coefs_used))
+  
+    
+  elastic_net_lambda_range[i] <- elastic_net_model$lambda.min
+  elastic_net_adjr2_range[i] <- adj_R2
+}
+```
+
+Next, I will plot the adjusted R-squared values against the alpha values: 
+
+```{r}
+plot(alpha_range,elastic_net_adjr2_range, type = 'l', xlab = 'Alpha Value', ylab = 'Adjusted R2', main = 'Elastic Net')
+```
+
+Hence, we can obtain the alpha value that yield the highest adjusted R-squared value:
+
+```{r}
+best_alpha <- alpha_range[which.max(elastic_net_adjr2_range)]
+best_alpha
+```
+
+Now, I will plug the alpha value into the cv.glmnet() function again to obtain the final model from the Elastic Net method:
+
+```{r}
+set.seed(90)
+
+best_elastic_net_model <- cv.glmnet(scaled_data[,-16],scaled_data[,16],alpha = best_alpha, nfolds = 4, type.measure = 'mse', family= 'gaussian', standardize = FALSE)
+```
+
+The coefficient values of the model whose lambda yields the minimum cross-validated errors is:
+
+```{r}
+elastic_net_model <- coef(best_elastic_net_model, s = best_elastic_net_model$lambda.min)
+elastic_net_model
+```
+
+The coefficients used are: 
+
+```{r}
+elastic_net_predictor_used = names(elastic_net_model[,1][as.matrix(elastic_net_model) != 0])[-1]
+elastic_net_predictor_used
+```
+
+Now, I will rerun the regression model with the the predictors selected by Elastic Net: 
+
+```{r}
+model_byElasticNet = lm(paste0("Crime~",paste0(elastic_net_predictor_used, collapse="+")), data=data.frame(scaled_data))
+
+summary(model_byElasticNet)
+```
+
+Then, I will do 4-fold cross validation on this model as with any other model above to get the final quality metrics for comparison:
+
+```{r}
+cv_model_byElasticNet <- cv.lm(crimedata, model_byElasticNet, m=4, seed = 93, plotit = FALSE)
+```
+
+The R-squared and adjusted R-squared value are: 
+
+```{r}
+R2_model_byElasticNet <- get_R2(cv_model_byElasticNet$cvpred,crimedata$Crime)
+AdjR2_model_byElasticNet <- 1 - ((1-R2_model_byElasticNet)*(nrow(crimedata)-1))/(nrow(crimedata)-length(model_byElasticNet$coefficients)+1)
+```
+
+The model's quality metrics are as below:
+
+```{r}
+model_byElasticNet_quality <- data.table(Method = 'by Elastic Net', R2 = R2_model_byElasticNet, Adj_R2 = AdjR2_model_byElasticNet, AIC = AIC(model_byElasticNet), Corrected_AIC = AICc(model_byElasticNet), BIC = BIC(model_byElasticNet))
+
+model_byElasticNet_quality
+```
+
+As a result, the final comparison table of all models I used above are: 
+
+```{r}
+comparison_table <- data.frame(rbind(original_model_quality,model_byAIC_quality,model_byBIC_quality,model_byLASSO_quality,model_byElasticNet_quality))
+
+comparison_table
+```
+
+From the table above, the regression model selected using stepwise regression with criteria of minimum BIC performs better on 4 out of 5 metrics (i.e R-squared, Adjusted R-squared, Corrected AIC, BIC) after cross validation. Hence, the model determined by that method is the optimal one out of all.
