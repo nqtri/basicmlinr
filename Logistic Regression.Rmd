@@ -1,0 +1,220 @@
+```{r}
+set.seed(93)
+library(pROC)
+```
+
+```{r}
+creditdata <- read.table('germancredit.txt',header = FALSE) #open data file with  headers then set header parameter to TRUE
+
+head(creditdata) #First 6 rows of the data
+```
+
+I noticed that the 'V21' responses are binary of 1 and 2. I need to bring the responses to between 0 and 1: 0 is good, 1 is bad for the logistic regression model:
+
+```{r}
+creditdata['V21'] <- creditdata['V21'] - 1
+
+head(creditdata)
+```
+
+I also noticed many predictor columns are non-numeric with the same character 'A, I will try to remove the 'A' to make all predictor values numeric. 
+
+```{r}
+creditdata[] <- lapply(creditdata, gsub, pattern='A', replacement='')
+creditdata[] <- lapply(creditdata,type.convert)
+
+head(creditdata)
+```
+
+Next, I will run a logistic regression on the whole dataset for some visualization:
+
+```{r}
+original_fit <- glm(V21~.,family=binomial(link='logit'), data = creditdata)
+
+summary(original_fit)
+```
+
+I can see that some predictors are statistically significant (P-value <0.05) and some are not. I will train and test model with all predictors and model with only significant predictors to see if there is a difference in quality.
+
+Here, I will split the dataset into training and testing sets for a ratio of 80/20 (80% trainig and 20% testing).
+
+I will employ the splitting method call 'rotation', which will take turns in selecting the data for each set. The order for going through each data point is: training -> testing -> training -> training -> training -> training -> training -> training -> testing -> training for each 10 data points.
+
+I will assign training to a value of 1 and testing 2. 
+
+``` {r selection}
+distribution <- rep_len(c(1,2,1,1,1,1,1,1,2,1),nrow(creditdata)) #setting up the selection order by rotation, up to the rows of the dataset
+```
+
+Training Set:
+
+``` {r training}
+train_credit = creditdata[distribution==1,]
+head(train_credit)
+```
+
+Testing Set:
+
+```{r validation}
+test_credit = creditdata[distribution==2,]
+head(test_credit)
+```
+
+Next, I will train on train set with all predictors:
+
+```{r}
+allpred_fit <- glm(V21~.,family=binomial(link='logit'), data = train_credit)
+
+summary(allpred_fit)
+```
+
+Then, I will use the trained logistic regression model to predict on the test set:
+
+```{r}
+allpred_test <- predict(allpred_fit,test_credit,type='response')
+```
+
+Next, I will use the roc() function to produce the ROC curve with smooth parameter set to TRUE for the plot to be visualized more easily:
+
+```{r}
+ROC_curve <- roc(test_credit$V21,allpred_test,smooth=TRUE)
+```
+
+```{r}
+plot(ROC_curve,main="ROC curve")
+```
+
+The area under the curve, AUC is thus:
+
+```{r}
+allpred_AUC <- ROC_curve$auc
+allpred_AUC
+```
+
+Next, I will employ another model with insignificant predictor removed (i.e. those with P-value < 0.05) in the original_fit model for the train set. 
+
+```{r}
+selectpred_fit <- glm(V21~.-V2-V4-V10-V11-V13-V15-V16-V17-V18-V19-V20,family=binomial(link='logit'), data = train_credit)
+
+summary(selectpred_fit)
+```
+
+Then, I used the trained logistic regression model to predict on the test set again: 
+
+```{r}
+selectpred_test <- predict(selectpred_fit,test_credit,type='response')
+```
+
+```{r}
+select_ROC_curve <- roc(test_credit$V21,selectpred_test,smooth=TRUE)
+```
+
+```{r}
+plot(select_ROC_curve,main="ROC curve")
+```
+
+The AUC for this is:
+
+```{r}
+selectpred_AUC <- select_ROC_curve$auc
+selectpred_AUC
+```
+
+Since AUC for the test set is higher for the model with only significant predictors (79.16% vs 77.66%), we say it's a better model than all predictor model. 79.16% AUC means that for both samples of 'yes' and 'no' responses, the model will correctly classify 79.16% of them.
+
+The coefficients for that logistic regression model is:
+
+```{r}
+final_model <- glm(V21~.-V2-V4-V10-V11-V13-V15-V16-V17-V18-V19-V20,family=binomial(link='logit'), creditdata)
+final_model$coefficients
+```
+
+I will use this model for further analysis.
+
+### Part 2
+
+The prediction for all data points using the model with selected predictors above is: 
+
+```{r}
+final_predictions <- predict(final_model,creditdata,type='response')
+
+head(final_predictions)
+```
+
+Here, a false positive is 5 times as bad as a false negative. I will calculate the total cost of these false predictions through a range of threshold. 
+
+Since we see that a false positive is much more costly than a false negative, the threshold should not be higher than 0.5 since we want to make the credit approval process harder. Remember, 0 here means good customer and 1 means bad. Therefore, I will loop through thresholds from 0 to 0.5.
+
+First, I set up a function to calculate individual cost for each prediction:
+
+```{r}
+mistake_cost <- function(observed,predicted,threshold) {
+  if (observed == 1){ #observed bad
+    if (predicted <= threshold){ #predicted good
+      return (5)
+    }
+    else{
+      return (0)
+    }
+  }
+  if (observed == 0){ #observed good
+    if (predicted > threshold){ #predicted bad
+      return (1)
+    }
+    else{
+      return (0)
+    }
+  }
+}
+```
+
+Next, I set up a function for the overal cost of the whole model based on a threshold:
+
+```{r}
+
+total_cost <- function(observed_vector,predicted_vector,threshold){
+  totalcost = 0
+  for (i in 1:length(observed_vector)){
+    cost <- mistake_cost(observed_vector[i],predicted_vector[i],threshold = threshold)
+    
+    totalcost <- totalcost + cost
+  }
+  
+  return(totalcost)
+}
+```
+
+Then, I will loop through thresholds from 0 to 0.5 with 0.01 step to see which threshold would give the lowest cost for the given model:
+
+```{r}
+test_thresholds <- c(seq(0, 0.5, by = 0.01))
+
+totalcost_vector <- rep(0,length(test_thresholds))
+```
+
+```{r}
+for (i in 1:length(test_thresholds)){
+  total <- total_cost(creditdata$V21,final_predictions,test_thresholds[i])
+  
+  totalcost_vector[i] <- total
+}
+```
+
+```{r}
+plot(totalcost_vector, type = 'l')
+```
+
+The minimum cost in this case is:
+
+```{r}
+min(totalcost_vector)
+```
+
+The threshold that would give the minimum cost for the given model is:
+
+```{r}
+optimal_threshold <- test_thresholds[which.min(totalcost_vector)]
+optimal_threshold
+```
+
+Hence, a threshold of 15% will be optimal for the model as it minimize the cost for false predictions.
